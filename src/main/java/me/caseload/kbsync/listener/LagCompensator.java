@@ -1,5 +1,20 @@
 package me.caseload.kbsync.listener;
 
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
+
+import org.apache.commons.lang3.tuple.Pair;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerMoveEvent;
+
 import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.event.PacketListener;
 import com.github.retrooper.packetevents.event.PacketListenerPriority;
@@ -9,51 +24,31 @@ import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPl
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientPlayerPositionAndRotation;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
-import net.jafama.FastMath;
-import org.apache.commons.lang3.tuple.Pair;
-import org.bukkit.Bukkit;
-import org.bukkit.Location;
-import org.bukkit.entity.Player;
-import org.bukkit.event.EventHandler;
-import org.bukkit.event.Listener;
-import org.bukkit.event.player.PlayerMoveEvent;
 
-import java.util.List;
-import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.atomic.AtomicBoolean;
+import net.jafama.FastMath;
 
 public class LagCompensator implements Listener {
 
     public final ListMultimap<UUID, Pair<Location, Long>> locationTimes = ArrayListMultimap.create();
-    public final AtomicBoolean enableLagCompensation = new AtomicBoolean(true); // Default to true for simplicity
-    private final int historySize = 20; // Default value
-    private final int pingOffset = 120; // Default value
-    private final int timeResolution = 35; // Default value
-    private final double compensationFactor = 0.5; // Default value
-    public final ExecutorService executorService;
+    private final int historySize = 40;
+    private final int pingOffset = 92;
+    private final int timeResolution = 30;
+    private final double compensationFactor = 0.5; // Added compensation factor
+    private final AtomicBoolean enableLagCompensation = new AtomicBoolean(true);
+    private final ExecutorService executorService;
 
     public LagCompensator() {
-        // Create a ThreadFactory that sets thread priority to HIGH
         ThreadFactory highPriorityThreadFactory = r -> {
             Thread thread = new Thread(r);
-            thread.setPriority(Thread.MAX_PRIORITY); // Set to highest priority
+            thread.setPriority(Thread.MAX_PRIORITY);
             return thread;
         };
-
-        // Initialize the ExecutorService with the high priority ThreadFactory
         this.executorService = Executors.newFixedThreadPool(2, highPriorityThreadFactory);
-
-        // Register the PacketListener
         PacketEvents.getAPI().getEventManager().registerListener(new PositionPacketListener(), PacketListenerPriority.HIGH);
     }
 
     public LagCompensator(ExecutorService executorService) {
         this.executorService = executorService;
-
-        // Register the PacketListener
         PacketEvents.getAPI().getEventManager().registerListener(new PositionPacketListener(), PacketListenerPriority.HIGH);
     }
 
@@ -88,12 +83,11 @@ public class LagCompensator implements Listener {
                 }
 
                 if (newLocation != null) {
-                    // Enviar la tarea al ExecutorService
                     final Location finalNewLocation = newLocation;
                     executorService.submit(() -> registerMovement(player, finalNewLocation));
                 }
             } catch (Exception e) {
-                e.printStackTrace(); // Print stack trace for errors
+                e.printStackTrace();
             }
         }
     }
@@ -129,20 +123,19 @@ public class LagCompensator implements Listener {
                 double movementRelAge = millisSinceLoc - (rewindMillisecs + pingOffset);
 
                 if (millisSinceNextLoc <= 0) {
-                    millisSinceNextLoc = 1; // Evita división por cero
+                    millisSinceNextLoc = 1;
                 }
 
                 double t = movementRelAge / millisSinceNextLoc;
-                t = FastMath.min(1.0, FastMath.max(0.0, t)); // Asegura que t esté en el rango [0, 1]
+                t = FastMath.min(1.0, FastMath.max(0.0, t));
 
                 Location interpolatedLocation = interpolateCubic(before, current, after, t * compensationFactor);
 
                 if (isLocationValid(interpolatedLocation)) {
                     return interpolatedLocation;
                 } else {
-                    // Log de advertencia si se encuentra un valor no finito
                     Bukkit.getLogger().warning("Compensated location contains non-finite values: " + interpolatedLocation.toVector());
-                    return player.getLocation(); // Fallback en caso de valores no finitos
+                    return player.getLocation();
                 }
             }
         }

@@ -1,36 +1,37 @@
 package me.caseload.kbsync.listener;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.util.Vector;
+
 import com.github.retrooper.packetevents.PacketEvents;
-import com.github.retrooper.packetevents.PacketEventsAPI;
 import com.github.retrooper.packetevents.event.PacketListener;
 import com.github.retrooper.packetevents.event.PacketListenerPriority;
 import com.github.retrooper.packetevents.event.PacketReceiveEvent;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientInteractEntity;
-import net.jafama.FastMath;
+
 import me.caseload.kbsync.KbSync;
 import me.caseload.kbsync.ServerSidePlayerHitEvent;
 import me.caseload.kbsync.utils.AABB;
 import me.caseload.kbsync.utils.Ray;
-import org.bukkit.Bukkit;
-import org.bukkit.Location;
-import org.bukkit.entity.Entity;
-import org.bukkit.entity.Player;
-import org.bukkit.event.EventHandler;
-import org.bukkit.event.Listener;
-import org.bukkit.event.player.PlayerAnimationEvent;
-import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
-import org.bukkit.util.BlockIterator;
-import org.bukkit.util.Vector;
-
-import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import net.jafama.FastMath;
 
 public class Async implements Listener {
 
     private final LagCompensator lagCompensator;
+    private final Map<Integer, Player> entityIdCache = new HashMap<>();
+    private static final double MAX_HIT_REACH = 3.1;
     private final ExecutorService executorService;
     private final ReentrantReadWriteLock cacheLock = new ReentrantReadWriteLock();
     private final AABB playerBoundingBox;
@@ -59,11 +60,14 @@ public class Async implements Listener {
             if (event.getPacketType() == PacketType.Play.Client.INTERACT_ENTITY) {
                 WrapperPlayClientInteractEntity interactEntityPacket = new WrapperPlayClientInteractEntity(event);
                 if (interactEntityPacket.getAction() == WrapperPlayClientInteractEntity.InteractAction.ATTACK) {
-                    final Player attacker = (Player) event.getPlayer();
-                    final int entityId = interactEntityPacket.getEntityId();
+                    Player attacker = (Player) event.getPlayer();
+                    if (attacker == null) {
+                        return;
+                    }
+                    int entityId = interactEntityPacket.getEntityId();
 
                     executorService.submit(() -> {
-                        final Player target = getPlayerFromEntityId(entityId);
+                        Player target = getPlayerFromEntityId(entityId);
                         if (target != null && isHitValid(attacker, target)) {
                             Bukkit.getScheduler().runTask(KbSync.getInstance(), () -> handleHit(attacker, target));
                         }
@@ -76,27 +80,53 @@ public class Async implements Listener {
     private Player getPlayerFromEntityId(int entityId) {
         cacheLock.readLock().lock();
         try {
-            return Bukkit.getOnlinePlayers().stream()
-                    .filter(player -> player.getEntityId() == entityId)
+            Player player = entityIdCache.get(entityId);
+            if (player == null) {
+                player = Bukkit.getOnlinePlayers().stream()
+                    .filter(p -> p.getEntityId() == entityId)
                     .findFirst()
                     .orElse(null);
+                if (player != null) {
+                    cacheLock.writeLock().lock();
+                    try {
+                        entityIdCache.put(entityId, player);
+                    } finally {
+                        cacheLock.writeLock().unlock();
+                    }
+                }
+            }
+            return player;
         } finally {
             cacheLock.readLock().unlock();
         }
     }
 
     private boolean isHitValid(Player attacker, Player target) {
-        return attacker.getWorld().equals(target.getWorld()) &&
-               FastMath.sqrt(FastMath.pow2(attacker.getLocation().getX() - target.getLocation().getX()) +
-                             FastMath.pow2(attacker.getLocation().getY() - target.getLocation().getY()) +
-                             FastMath.pow2(attacker.getLocation().getZ() - target.getLocation().getZ())) <= reach;
+        if (attacker == null || target == null) {
+            return false;
+        }
+        if (!attacker.getWorld().equals(target.getWorld())) {
+            return false;
+        }
+
+        Location attackerLoc = attacker.getLocation();
+        Location targetLoc = target.getLocation();
+        if (attackerLoc == null || targetLoc == null) {
+            return false;
+        }
+
+        double dx = attackerLoc.getX() - targetLoc.getX();
+        double dy = attackerLoc.getY() - targetLoc.getY();
+        double dz = attackerLoc.getZ() - targetLoc.getZ();
+        return FastMath.sqrt(FastMath.pow2(dx) + FastMath.pow2(dy) + FastMath.pow2(dz)) <= MAX_HIT_REACH;
     }
 
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
         cacheLock.writeLock().lock();
         try {
-            // No se usa entityIdCache en este caso
+            entityIdCache.put(player.getEntityId(), player);
         } finally {
             cacheLock.writeLock().unlock();
         }
@@ -104,63 +134,46 @@ public class Async implements Listener {
 
     @EventHandler
     public void onLeave(PlayerQuitEvent event) {
+        Player player = event.getPlayer();
         cacheLock.writeLock().lock();
         try {
-            // No se usa entityIdCache en este caso
+            entityIdCache.remove(player.getEntityId());
         } finally {
             cacheLock.writeLock().unlock();
         }
     }
 
-    @EventHandler
-    public void detectHit(PlayerAnimationEvent e) {
-        final Player attacker = e.getPlayer();
-        final Location attackerLoc = attacker.getLocation();
-        final Vector attackerPos = attackerLoc.toVector().add(new Vector(0, attacker.isSneaking() ? 1.52625 : 1.62, 0));
-        final List<Entity> nearbyEntities = attacker.getNearbyEntities(reach + 2, reach + 2, reach + 2);
-        final AABB victimBox = playerBoundingBox.clone();
-        final Vector boxOffset = playerBoundingBox.getMin();
-        Ray ray = null;
-        double hitDistance = Double.MAX_VALUE;
-        Player victim = null;
-        final int ping = PacketEvents.getAPI().getPlayerUtils().getPing(attacker);
-
-        for (Entity entity : nearbyEntities) {
-            if (!(entity instanceof Player)) continue;
-
-            Player potentialVictim = (Player) entity;
-            ray = new Ray(attackerPos, attackerLoc.getDirection());
-            final Location compensatedLocation = lagCompensator.getHistoryLocation(ping, potentialVictim);
-            if (compensatedLocation == null) continue;
-
-            victimBox.translateTo(compensatedLocation.toVector());
-            victimBox.translate(boxOffset);
-            Vector intersection = victimBox.intersectsRay(ray, 0, reach);
-
-            if (intersection == null) continue;
-            double chkHitDistance = intersection.distance(attackerPos);
-
-            if (chkHitDistance < hitDistance) {
-                hitDistance = chkHitDistance;
-                victim = potentialVictim;
-            }
-        }
-
-        if (victim == null || ray == null) return;
-
-        final int blockIterIterations = (int) hitDistance;
-        if (blockIterIterations != 0) {
-            BlockIterator iter = new BlockIterator(attacker.getWorld(), attackerPos, ray.getDirection(), 0, blockIterIterations);
-            while (iter.hasNext()) {
-                if (iter.next().getType().isSolid()) return;
-            }
-        }
-
-        final Player finalVictim = victim;
-        Bukkit.getScheduler().runTask(KbSync.getInstance(), () -> Bukkit.getPluginManager().callEvent(new ServerSidePlayerHitEvent(attacker, finalVictim)));
-    }
-
     private void handleHit(Player attacker, Player target) {
-        // Lógica del golpe ya está manejada en detectHit, este método puede estar vacío
+        if (attacker == null || target == null) {
+            return;
+        }
+
+        Location attackerLoc = attacker.getLocation();
+        if (attackerLoc == null) {
+            return;
+        }
+        Vector attackerPos = attackerLoc.toVector().add(new Vector(0, attacker.isSneaking() ? 1.52625 : 1.62, 0));
+        AABB victimBox = playerBoundingBox.clone();
+        Vector boxOffset = playerBoundingBox.getMin();
+        Ray ray = new Ray(attackerPos, attackerLoc.getDirection());
+        double hitDistance = Double.MAX_VALUE;
+
+        int rewindMillisecs = 120;  // Puedes ajustar este valor según sea necesario
+        Location compensatedLocation = lagCompensator.getHistoryLocation(rewindMillisecs, target);
+        if (compensatedLocation == null) {
+            return;
+        }
+
+        // Traducir la caja de colisión del objetivo a la ubicación compensada
+        victimBox.translateTo(compensatedLocation.toVector());
+        victimBox.translate(boxOffset);
+        Vector intersection = victimBox.intersectsRay(ray, 0, reach);
+
+        if (intersection != null) {
+            double distance = intersection.distance(attackerPos);
+            if (distance < hitDistance) {
+            Bukkit.getPluginManager().callEvent(new ServerSidePlayerHitEvent(attacker, target));
+        }
+        }
     }
 }
