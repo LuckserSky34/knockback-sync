@@ -31,9 +31,9 @@ public class LagCompensator implements Listener {
 
     public final ListMultimap<UUID, Pair<Location, Long>> locationTimes = ArrayListMultimap.create();
     private final int historySize = 40;
-    private final int pingOffset = 92;
-    private final int timeResolution = 30;
-    private final double compensationFactor = 0.5; // Added compensation factor
+    private final int pingOffset = 100;
+    private final int timeResolution = 35;
+    private final double compensationFactor = 0.1; // Added compensation factor
     private final AtomicBoolean enableLagCompensation = new AtomicBoolean(true);
     private final ExecutorService executorService;
 

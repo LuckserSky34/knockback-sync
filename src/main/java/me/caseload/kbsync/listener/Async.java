@@ -158,7 +158,7 @@ public class Async implements Listener {
         Ray ray = new Ray(attackerPos, attackerLoc.getDirection());
         double hitDistance = Double.MAX_VALUE;
 
-        int rewindMillisecs = 120;  // Puedes ajustar este valor según sea necesario
+        int rewindMillisecs = 20;  // Puedes ajustar este valor según sea necesario
         Location compensatedLocation = lagCompensator.getHistoryLocation(rewindMillisecs, target);
         if (compensatedLocation == null) {
             return;
