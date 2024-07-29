@@ -1,27 +1,39 @@
 package me.caseload.kbsync;
 
-import com.comphenix.protocol.PacketType;
-import com.comphenix.protocol.ProtocolLibrary;
-import com.comphenix.protocol.ProtocolManager;
-import com.comphenix.protocol.events.*;
-import com.github.retrooper.packetevents.PacketEvents;
-import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder;
-import me.caseload.kbsync.command.Subcommands;
-import me.caseload.kbsync.listener.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import com.comphenix.protocol.PacketType;
+import com.comphenix.protocol.ProtocolLibrary;
+import com.comphenix.protocol.ProtocolManager;
+import com.comphenix.protocol.events.ListenerPriority;
+import com.comphenix.protocol.events.PacketAdapter;
+import com.comphenix.protocol.events.PacketContainer;
+import com.comphenix.protocol.events.PacketEvent;
+import com.github.retrooper.packetevents.PacketEvents;
+
+import io.github.retrooper.packetevents.factory.spigot.SpigotPacketEventsBuilder;
+import me.caseload.kbsync.command.Subcommands;
+import me.caseload.kbsync.listener.Async;
+import me.caseload.kbsync.listener.LagCompensator;
+import me.caseload.kbsync.listener.PlayerHitListener;
+import me.caseload.kbsync.listener.PlayerVelocityListener;
 
 public final class KbSync extends JavaPlugin {
 
     private static KbSync instance;
     private static ProtocolManager protocolManager;
     private LagCompensator lagCompensator;
-    private Async asyncListener;
     private ExecutorService executorService;
 
     private static final Map<UUID, List<Long>> keepAliveTime = Collections.synchronizedMap(new HashMap<>());
@@ -46,8 +58,12 @@ public final class KbSync extends JavaPlugin {
         PacketEvents.getAPI().init();
 
         lagCompensator = new LagCompensator(executorService);
-        asyncListener = new Async(lagCompensator, executorService);
-        getServer().getPluginManager().registerEvents(asyncListener, this);
+
+        // Crear la instancia de Async y registrar el HitPacketListener
+        Async asyncHandler = new Async(lagCompensator);
+
+        // Registramos la clase Async como listener de eventos de Bukkit
+        getServer().getPluginManager().registerEvents(asyncHandler, this);
 
         saveDefaultConfig();
         setupProtocolLib();
@@ -67,7 +83,7 @@ public final class KbSync extends JavaPlugin {
 
         getServer().getPluginManager().registerEvents(new PlayerHitListener(protocolManager, lagCompensator), this);
         Bukkit.getLogger().info("[KbSync] Registered PlayerHitListener");
-        getServer().getPluginManager().registerEvents(new PlayerVelocityListener(accuratePing), this);
+        getServer().getPluginManager().registerEvents(new PlayerVelocityListener(accuratePing, lagCompensator), this);
         Bukkit.getLogger().info("[KbSync] Registered PlayerVelocityListener");
 
         getCommand("knockbacksync").setExecutor(new Subcommands(accuratePing));
@@ -142,5 +158,6 @@ public final class KbSync extends JavaPlugin {
 
     public LagCompensator getLagCompensator() {
         return lagCompensator;
+
     }
 }

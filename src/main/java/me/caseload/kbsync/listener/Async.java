@@ -1,9 +1,9 @@
 package me.caseload.kbsync.listener;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.Executors;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
@@ -15,9 +15,10 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.util.Vector;
 
 import com.github.retrooper.packetevents.PacketEvents;
-import com.github.retrooper.packetevents.event.PacketListener;
+import com.github.retrooper.packetevents.event.PacketListenerAbstract;
 import com.github.retrooper.packetevents.event.PacketListenerPriority;
 import com.github.retrooper.packetevents.event.PacketReceiveEvent;
+import com.github.retrooper.packetevents.event.PacketSendEvent;
 import com.github.retrooper.packetevents.protocol.packettype.PacketType;
 import com.github.retrooper.packetevents.wrapper.play.client.WrapperPlayClientInteractEntity;
 
@@ -29,17 +30,15 @@ import net.jafama.FastMath;
 
 public class Async implements Listener {
 
-    private final LagCompensator lagCompensator;
-    private final Map<Integer, Player> entityIdCache = new HashMap<>();
-    private static final double MAX_HIT_REACH = 3.1;
-    private final ExecutorService executorService;
-    private final ReentrantReadWriteLock cacheLock = new ReentrantReadWriteLock();
+    public final LagCompensator lagCompensator;
+    private final Map<Integer, Player> entityIdCache = new ConcurrentHashMap<>();
+    private static final double MAX_HIT_REACH = 3.0;
     private final AABB playerBoundingBox;
     private final float reach;
+    private static final ExecutorService EXECUTOR = Executors.newFixedThreadPool(2); // Pool de hilos
 
-    public Async(LagCompensator lagCompensator, ExecutorService executorService) {
+    public Async(LagCompensator lagCompensator) {
         this.lagCompensator = lagCompensator;
-        this.executorService = executorService;
 
         // Inicialización de la caja de colisión y otros parámetros
         double length = 0.9;
@@ -47,65 +46,93 @@ public class Async implements Listener {
         reach = 4.0f;
         playerBoundingBox = new AABB(new Vector(-length / 2, 0, -length / 2), new Vector(length / 2, height, length / 2));
 
-        // Registrar los eventos de Bukkit
-        Bukkit.getPluginManager().registerEvents(this, KbSync.getInstance());
-
-        // Registrar el PacketListener
-        PacketEvents.getAPI().getEventManager().registerListener(new HitPacketListener(), PacketListenerPriority.HIGHEST);
+        // Registrar el PacketListener con la prioridad más alta
+        PacketEvents.getAPI().getEventManager().registerListener(new HitPacketListener(lagCompensator));
     }
 
-    private class HitPacketListener implements PacketListener {
+    public class HitPacketListener extends PacketListenerAbstract {
+        private final LagCompensator lagCompensator;
+
+        public HitPacketListener(LagCompensator lagCompensator) {
+            super(PacketListenerPriority.HIGHEST); // Máxima prioridad
+            this.lagCompensator = lagCompensator;
+        }
+
         @Override
         public void onPacketReceive(PacketReceiveEvent event) {
             if (event.getPacketType() == PacketType.Play.Client.INTERACT_ENTITY) {
-                WrapperPlayClientInteractEntity interactEntityPacket = new WrapperPlayClientInteractEntity(event);
-                if (interactEntityPacket.getAction() == WrapperPlayClientInteractEntity.InteractAction.ATTACK) {
-                    Player attacker = (Player) event.getPlayer();
-                    if (attacker == null) {
-                        return;
-                    }
-                    int entityId = interactEntityPacket.getEntityId();
+                // Clonar el evento para mantener los datos del paquete
+                PacketReceiveEvent copy = event.clone();
+                EXECUTOR.execute(() -> {
+                    try {
+                        WrapperPlayClientInteractEntity interaction = new WrapperPlayClientInteractEntity(copy);
+                        if (interaction.getAction() == WrapperPlayClientInteractEntity.InteractAction.ATTACK) {
+                            Player attacker = Bukkit.getPlayer(copy.getUser().getUUID()); // Obtener Player de Bukkit
+                            if (attacker == null) {
+                                return; // Salir si el atacante no está en línea
+                            }
 
-                    executorService.submit(() -> {
-                        Player target = getPlayerFromEntityId(entityId);
-                        if (target != null && isHitValid(attacker, target)) {
-                            Bukkit.getScheduler().runTask(KbSync.getInstance(), () -> handleHit(attacker, target));
+                            int entityId = interaction.getEntityId();
+
+                            // Procesar el hit de manera asíncrona
+                            Player target = getPlayerFromEntityId(entityId);
+                            if (target != null && isHitValid(attacker, target)) {
+                                int rewindMillisecs = 20;  // Ajusta este valor según sea necesario
+                                Location compensatedLocation = lagCompensator.getHistoryLocation(rewindMillisecs, target);
+                                if (compensatedLocation == null) {
+                                    return;  // Salir si compensatedLocation es null
+                                }
+
+                                // Traducir la caja de colisión del objetivo a la ubicación compensada
+                                AABB victimBox = playerBoundingBox.clone();
+                                Vector compensatedVector = compensatedLocation.toVector();
+                                victimBox.translateTo(compensatedVector);
+                                victimBox.translate(playerBoundingBox.getMin());
+
+                                Location attackerLocation = attacker.getLocation();
+                                if (attackerLocation == null) {
+                                    return;  // Salir si la ubicación del atacante es null
+                                }
+                                Ray ray = new Ray(attackerLocation.toVector().add(new Vector(0, attacker.isSneaking() ? 1.52625 : 1.62, 0)), attackerLocation.getDirection());
+
+                                if (victimBox.intersectsRay(ray, 0, reach) != null) {
+                                    // Programar la tarea en el hilo principal del servidor
+                                    Bukkit.getScheduler().runTask(KbSync.getInstance(), () -> handleHit(attacker, target));
+                                }
+                            }
                         }
-                    });
-                }
+                    } catch (Exception e) {
+                        // Log la excepción
+                        e.printStackTrace();
+                    } finally {
+                        copy.cleanUp(); // Limpieza del evento para evitar fugas de memoria
+                    }
+                });
             }
+        }
+
+        @Override
+        public void onPacketSend(PacketSendEvent event) {
+            // Puedes agregar lógica adicional si es necesario
         }
     }
 
     private Player getPlayerFromEntityId(int entityId) {
-        cacheLock.readLock().lock();
-        try {
-            Player player = entityIdCache.get(entityId);
-            if (player == null) {
-                player = Bukkit.getOnlinePlayers().stream()
-                    .filter(p -> p.getEntityId() == entityId)
-                    .findFirst()
-                    .orElse(null);
-                if (player != null) {
-                    cacheLock.writeLock().lock();
-                    try {
-                        entityIdCache.put(entityId, player);
-                    } finally {
-                        cacheLock.writeLock().unlock();
-                    }
-                }
+        Player player = entityIdCache.get(entityId);
+        if (player == null) {
+            player = Bukkit.getOnlinePlayers().stream()
+                .filter(p -> p.getEntityId() == entityId)
+                .findFirst()
+                .orElse(null);
+            if (player != null) {
+                entityIdCache.put(entityId, player);
             }
-            return player;
-        } finally {
-            cacheLock.readLock().unlock();
         }
+        return player;
     }
 
     private boolean isHitValid(Player attacker, Player target) {
-        if (attacker == null || target == null) {
-            return false;
-        }
-        if (!attacker.getWorld().equals(target.getWorld())) {
+        if (attacker == null || target == null || !attacker.getWorld().equals(target.getWorld())) {
             return false;
         }
 
@@ -124,56 +151,18 @@ public class Async implements Listener {
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
-        cacheLock.writeLock().lock();
-        try {
-            entityIdCache.put(player.getEntityId(), player);
-        } finally {
-            cacheLock.writeLock().unlock();
-        }
+        entityIdCache.put(player.getEntityId(), player);
     }
 
     @EventHandler
     public void onLeave(PlayerQuitEvent event) {
         Player player = event.getPlayer();
-        cacheLock.writeLock().lock();
-        try {
-            entityIdCache.remove(player.getEntityId());
-        } finally {
-            cacheLock.writeLock().unlock();
-        }
+        entityIdCache.remove(player.getEntityId());
     }
 
     private void handleHit(Player attacker, Player target) {
-        if (attacker == null || target == null) {
-            return;
-        }
-
-        Location attackerLoc = attacker.getLocation();
-        if (attackerLoc == null) {
-            return;
-        }
-        Vector attackerPos = attackerLoc.toVector().add(new Vector(0, attacker.isSneaking() ? 1.52625 : 1.62, 0));
-        AABB victimBox = playerBoundingBox.clone();
-        Vector boxOffset = playerBoundingBox.getMin();
-        Ray ray = new Ray(attackerPos, attackerLoc.getDirection());
-        double hitDistance = Double.MAX_VALUE;
-
-        int rewindMillisecs = 20;  // Puedes ajustar este valor según sea necesario
-        Location compensatedLocation = lagCompensator.getHistoryLocation(rewindMillisecs, target);
-        if (compensatedLocation == null) {
-            return;
-        }
-
-        // Traducir la caja de colisión del objetivo a la ubicación compensada
-        victimBox.translateTo(compensatedLocation.toVector());
-        victimBox.translate(boxOffset);
-        Vector intersection = victimBox.intersectsRay(ray, 0, reach);
-
-        if (intersection != null) {
-            double distance = intersection.distance(attackerPos);
-            if (distance < hitDistance) {
+        if (attacker != null && target != null) {
             Bukkit.getPluginManager().callEvent(new ServerSidePlayerHitEvent(attacker, target));
-        }
         }
     }
 }

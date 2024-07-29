@@ -1,6 +1,7 @@
 package me.caseload.kbsync.listener;
 
-import me.caseload.kbsync.KbSync;
+import java.util.Map;
+import java.util.UUID;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -12,17 +13,19 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.player.PlayerVelocityEvent;
+import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
 
-import java.util.Map;
-import java.util.UUID;
+import me.caseload.kbsync.KbSync;
 
 public class PlayerVelocityListener implements Listener {
 
     private final Map<UUID, Integer> pingMap;
+    private final LagCompensator lagCompensator;
 
-    public PlayerVelocityListener(Map<UUID, Integer> pingMap) {
+    public PlayerVelocityListener(Map<UUID, Integer> pingMap, LagCompensator lagCompensator) {
         this.pingMap = pingMap;
+        this.lagCompensator = lagCompensator;
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
@@ -32,19 +35,25 @@ public class PlayerVelocityListener implements Listener {
         Player player = event.getPlayer();
         EntityDamageEvent entityDamageEvent = player.getLastDamageCause();
 
-        if (entityDamageEvent == null || entityDamageEvent.getCause() != EntityDamageEvent.DamageCause.ENTITY_ATTACK
-                || !(entityDamageEvent instanceof EntityDamageEvent)) {
+        if (entityDamageEvent == null || entityDamageEvent.getCause() != EntityDamageEvent.DamageCause.ENTITY_ATTACK) {
             return;
         }
 
         Vector velocity = player.getVelocity();
         if (isPlayerOnGround(player) || !isPredictiveOnGround(player, velocity.getY())) return;
 
-        // Process velocity adjustment asynchronously
+        // Get the adjusted velocity using LagCompensator
         Bukkit.getScheduler().runTaskAsynchronously(KbSync.getInstance(), () -> {
             Vector newVelocity = velocity.clone();
-            double yAxis = KbSync.kb.getOrDefault(player.getUniqueId(), velocity.getY());
-            newVelocity.setY(yAxis);
+            double adjustedY = lagCompensator.getAdjustedVerticalKnockback(player, velocity.getY());
+            newVelocity.setY(adjustedY);
+
+            // Optional: Adjust horizontal velocity slightly to avoid sudden increases
+            double adjustedX = velocity.getX() * 0.9; // Example adjustment factor
+            double adjustedZ = velocity.getZ() * 0.9; // Example adjustment factor
+            newVelocity.setX(adjustedX);
+            newVelocity.setZ(adjustedZ);
+
             player.setVelocity(newVelocity);
         });
     }
@@ -61,8 +70,8 @@ public class PlayerVelocityListener implements Listener {
         int ticksUntilFalling = verticalVelocity > 0 ? calculateTimeToReachMaxVerticalVelocity(verticalVelocity) : 0;
         int ticksToReachGround = calculateFallTime(verticalVelocity, maxHeight + distanceToGround);
         int delay = ticksUntilFalling + ticksToReachGround;
-        long estimatedPing = pingMap.getOrDefault(player.getUniqueId(), player.getPing());
 
+        long estimatedPing = pingMap.getOrDefault(player.getUniqueId(), player.getPing());
         return delay / 20.0 * 1000 <= estimatedPing && distanceToGround <= 1.3;
     }
 
@@ -115,14 +124,27 @@ public class PlayerVelocityListener implements Listener {
         double maxDistance = player.getLocation().getY();
 
         // Using ray tracing to find the distance to the ground
-        Block hitBlock = world.rayTraceBlocks(player.getLocation().clone(), new Vector(0, -1, 0), maxDistance).getHitBlock();
+        RayTraceResult rayTraceResult = world.rayTraceBlocks(player.getLocation().clone(), new Vector(0, -1, 0), maxDistance);
 
-        while (hitBlock != null && hitBlock.isPassable()) {
-            hitBlock = world.rayTraceBlocks(hitBlock.getLocation().clone(), new Vector(0, -1, 0), maxDistance).getHitBlock();
+        if (rayTraceResult == null || rayTraceResult.getHitBlock() == null) {
+            return 0; // No block was hit or hitBlock is null
         }
 
-        if (hitBlock == null) return 0;
-        double distanceToGround = player.getLocation().getY() - hitBlock.getLocation().getY();
-        return distanceToGround - 1;
+        Block hitBlock = rayTraceResult.getHitBlock();
+
+        // If the hit block is passable, continue searching for a non-passable block below
+        Block hitBlockBelow = hitBlock;
+        while (hitBlockBelow != null && (hitBlockBelow.getType() == Material.AIR || hitBlockBelow.getType() == Material.WATER || hitBlockBelow.getType() == Material.LAVA)) {
+            // Move the start point of the ray down to continue searching for a non-passable block
+            hitBlockBelow = world.getBlockAt(hitBlockBelow.getLocation().clone().subtract(0, 1, 0));
+        }
+
+        if (hitBlockBelow == null || !hitBlockBelow.getType().isSolid()) {
+            return 0; // No non-passable block found
+        }
+
+        // Calculate the distance to the non-passable block
+        double distanceToGround = player.getLocation().getY() - hitBlockBelow.getLocation().getY();
+        return distanceToGround - 0.5; // Adjust distance if necessary
     }
 }

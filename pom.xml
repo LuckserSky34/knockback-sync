@@ -1,6 +1,6 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://www.apache.org/xsd/maven-4.0.0.xsd">
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://www.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>me.caseload</groupId>
@@ -26,7 +26,7 @@
         </repository>
         <repository>
             <id>codemc-releases</id>
-            <url>https://repo.codemc.io/repository/maven-releases/</url>
+            <url>https://repo.codemc.io/repository/maven-snapshots/</url>
         </repository>
         <repository>
             <id>papermc</id>
@@ -70,8 +70,20 @@
             <artifactId>commons-lang3</artifactId>
             <version>3.12.0</version>
         </dependency>
-    </dependencies>
-    
+
+        <!-- Dependencias de Netty -->
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-buffer</artifactId>
+            <version>4.1.75.Final</version> <!-- Usa una versión compatible -->
+        </dependency>
+        <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-common</artifactId>
+            <version>4.1.75.Final</version> <!-- Usa una versión compatible -->
+        </dependency>
+    </dependencies> 
+
     <build>
         <resources>
             <resource>
@@ -128,4 +140,14 @@
             </plugin>
         </plugins>
     </build>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.jetbrains</groupId>
+                <artifactId>annotations</artifactId>
+                <version>22.0.0</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 </project>

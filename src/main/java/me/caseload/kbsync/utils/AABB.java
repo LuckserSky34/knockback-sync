@@ -1,21 +1,3 @@
-/*
- * This file is part of Hawk Anticheat.
- * Copyright (C) 2018 Hawk Development Team
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- */
-
 package me.caseload.kbsync.utils;
 
 import org.bukkit.util.Vector;
@@ -26,28 +8,30 @@ public class AABB implements Cloneable {
     private Vector max;
 
     public AABB(Vector min, Vector max) {
+        if (min == null || max == null) {
+            throw new IllegalArgumentException("Min and Max vectors cannot be null");
+        }
         this.min = min;
         this.max = max;
     }
 
     /**
-     * Calculates intersection with the given ray between a certain distance
-     * interval.
+     * Calculates intersection with the given ray between a certain distance interval.
      * <p>
-     * Ray-box intersection is using IEEE numerical properties to ensure the
-     * test is both robust and efficient, as described in:
+     * Ray-box intersection is using IEEE numerical properties to ensure the test is both robust and efficient, as described in:
      * <p>
-     * Amy Williams, Steve Barrus, R. Keith Morley, and Peter Shirley: "An
-     * Efficient and Robust Ray-Box Intersection Algorithm" Journal of graphics
-     * tools, 10(1):49-54, 2005
+     * Amy Williams, Steve Barrus, R. Keith Morley, and Peter Shirley: "An Efficient and Robust Ray-Box Intersection Algorithm" Journal of graphics tools, 10(1):49-54, 2005
      *
      * @param ray     incident ray
      * @param minDist minimum distance
      * @param maxDist maximum distance
-     * @return intersection point on the bounding box (only the first is
-     * returned) or null if no intersection
+     * @return intersection point on the bounding box (only the first is returned) or null if no intersection
      */
     public Vector intersectsRay(Ray ray, float minDist, float maxDist) {
+        if (ray == null) {
+            throw new IllegalArgumentException("Ray cannot be null");
+        }
+
         Vector invDir = new Vector(1f / ray.getDirection().getX(), 1f / ray.getDirection().getY(), 1f / ray.getDirection().getZ());
 
         boolean signDirX = invDir.getX() < 0;
@@ -94,12 +78,18 @@ public class AABB implements Cloneable {
     }
 
     public void translate(Vector vector) {
+        if (vector == null) {
+            throw new IllegalArgumentException("Translation vector cannot be null");
+        }
         min.add(vector);
         max.add(vector);
     }
 
     //translate AABB so that the min point is located at the given vector (AABB origin is min)
     public void translateTo(Vector vector) {
+        if (vector == null) {
+            throw new IllegalArgumentException("Target vector cannot be null");
+        }
         max.setX(vector.getX() + (max.getX() - min.getX()));
         max.setY(vector.getY() + (max.getY() - min.getY()));
         max.setZ(vector.getZ() + (max.getZ() - min.getZ()));
@@ -109,6 +99,9 @@ public class AABB implements Cloneable {
     }
 
     public boolean isColliding(AABB other) {
+        if (other == null) {
+            throw new IllegalArgumentException("Other AABB cannot be null");
+        }
         if (max.getX() < other.getMin().getX() || min.getX() > other.getMax().getX()) {
             return false;
         }
@@ -118,17 +111,16 @@ public class AABB implements Cloneable {
         return !(max.getZ() < other.getMin().getZ()) && !(min.getZ() > other.getMax().getZ());
     }
 
+    @Override
     public AABB clone() {
-        AABB clone;
         try {
-            clone = (AABB) super.clone();
+            AABB clone = (AABB) super.clone();
             clone.min = this.min.clone();
             clone.max = this.max.clone();
             return clone;
         } catch (CloneNotSupportedException e) {
-            e.printStackTrace();
+            throw new RuntimeException("Clone not supported", e);
         }
-        return null;
     }
 
     public double getVolume() {

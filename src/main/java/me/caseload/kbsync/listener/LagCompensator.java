@@ -30,10 +30,10 @@ import net.jafama.FastMath;
 public class LagCompensator implements Listener {
 
     public final ListMultimap<UUID, Pair<Location, Long>> locationTimes = ArrayListMultimap.create();
-    private final int historySize = 40;
+    private final int historySize = 30;
     private final int pingOffset = 100;
-    private final int timeResolution = 35;
-    private final double compensationFactor = 0.1; // Added compensation factor
+    private final int timeResolution = 30;
+    private final double compensationFactor = 0.3;
     private final AtomicBoolean enableLagCompensation = new AtomicBoolean(true);
     private final ExecutorService executorService;
 
@@ -57,7 +57,7 @@ public class LagCompensator implements Listener {
         public void onPacketReceive(PacketReceiveEvent event) {
             try {
                 Player player = (Player) event.getPlayer();
-                if (player == null) {
+                if (player == null || !player.isOnline()) {
                     return;
                 }
 
@@ -93,7 +93,7 @@ public class LagCompensator implements Listener {
     }
 
     public Location getHistoryLocation(int rewindMillisecs, Player player) {
-        if (!enableLagCompensation.get() || !locationTimes.containsKey(player.getUniqueId())) {
+        if (!enableLagCompensation.get() || !player.isOnline() || !locationTimes.containsKey(player.getUniqueId())) {
             return player.getLocation();
         }
 
@@ -166,7 +166,7 @@ public class LagCompensator implements Listener {
     }
 
     private void processPosition(Location loc, Player p) {
-        if (!enableLagCompensation.get()) return;
+        if (!enableLagCompensation.get() || !p.isOnline()) return;
 
         UUID playerId = p.getUniqueId();
         long currTime = System.currentTimeMillis();
@@ -188,7 +188,9 @@ public class LagCompensator implements Listener {
     }
 
     public void clearCache(Player player) {
-        locationTimes.removeAll(player.getUniqueId());
+        if (player.isOnline()) {
+            locationTimes.removeAll(player.getUniqueId());
+        }
     }
 
     @EventHandler
@@ -200,5 +202,21 @@ public class LagCompensator implements Listener {
 
     public void shutdown() {
         executorService.shutdown();
+    }
+
+    /**
+     * Adjusts the vertical knockback to smooth out sudden velocity changes.
+     * @param player The player who is affected.
+     * @param currentVerticalVelocity The current vertical velocity of the player.
+     * @return The adjusted vertical velocity.
+     */
+    public double getAdjustedVerticalKnockback(Player player, double currentVerticalVelocity) {
+        // Apply smoothing factor to avoid sudden changes
+        double smoothingFactor = 0.5; // Adjust as needed
+        double adjustedVerticalVelocity = currentVerticalVelocity * smoothingFactor;
+
+        // Optionally: Implement more sophisticated adjustment logic based on lag or other factors
+
+        return adjustedVerticalVelocity;
     }
 }

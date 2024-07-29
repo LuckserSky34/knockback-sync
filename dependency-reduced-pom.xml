@@ -70,7 +70,7 @@
     </repository>
     <repository>
       <id>codemc-releases</id>
-      <url>https://repo.codemc.io/repository/maven-releases/</url>
+      <url>https://repo.codemc.io/repository/maven-snapshots/</url>
     </repository>
     <repository>
       <id>papermc</id>
@@ -85,6 +85,15 @@
       <scope>provided</scope>
     </dependency>
   </dependencies>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.jetbrains</groupId>
+        <artifactId>annotations</artifactId>
+        <version>22.0.0</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
   <properties>
     <java.version>21</java.version>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

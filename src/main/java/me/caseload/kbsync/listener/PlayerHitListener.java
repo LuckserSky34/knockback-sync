@@ -1,15 +1,16 @@
 package me.caseload.kbsync.listener;
 
-import com.comphenix.protocol.PacketType;
-import com.comphenix.protocol.ProtocolManager;
-import com.comphenix.protocol.events.PacketContainer;
-import me.caseload.kbsync.KbSync;
 import org.bukkit.Bukkit;
-import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
+
+import com.comphenix.protocol.PacketType;
+import com.comphenix.protocol.ProtocolManager;
+import com.comphenix.protocol.events.PacketContainer;
+
+import me.caseload.kbsync.KbSync;
 
 public class PlayerHitListener implements Listener {
 
@@ -30,9 +31,9 @@ public class PlayerHitListener implements Listener {
         Player victim = (Player) event.getEntity();
         Player damager = (Player) event.getDamager();
 
-        // Calcular el valor de knockback
-        double calculatedValue = calculateYAxis(damager, victim);
-        KbSync.kb.put(victim.getUniqueId(), calculatedValue);
+        // Calcular el valor de knockback basado en el delay de 1.8 (10 ticks)
+        double knockbackValue = calculateKnockback(damager, victim);
+        KbSync.kb.put(victim.getUniqueId(), knockbackValue);
 
         // Compensar el lag usando LagCompensator
         lagCompensator.registerMovement(victim, victim.getLocation());
@@ -46,19 +47,34 @@ public class PlayerHitListener implements Listener {
                 KbSync.sendPingPacket(victim, packet);
             });
         }
+
+        // Actualizar la posición del jugador después de recibir el knockback
+        updatePlayerPosition(victim);
     }
 
-    public static double calculateYAxis(Player attacker, Player victim) {
+    public double calculateKnockback(Player attacker, Player victim) {
         float attackCooldown = attacker.getAttackCooldown();
-        double a = (attackCooldown > 0.9) ? 0.4 : 0.36080000519752503;
+        double knockbackValue = (attackCooldown > 0.9) ? 0.1 : 0.11080000519752503;
 
         if (!attacker.isSprinting()) {
-            a = 0.36080000519752503;
-            double b = victim.getAttribute(Attribute.GENERIC_KNOCKBACK_RESISTANCE).getValue() * 10;
-            double c = 0.04000000119 * b;
-            a -= c;
+            knockbackValue = 0.11080000519752503;
+            double reduction = 0.11000000119;
+            knockbackValue -= reduction;
         }
 
-        return a;
+        return knockbackValue;
+    }
+
+    private void updatePlayerPosition(Player victim) {
+        // Aquí puedes añadir la lógica para ajustar la posición del jugador
+        // según el knockback calculado y el lag compensado.
+        // Puedes utilizar la clase LagCompensator para obtener la ubicación
+        // compensada y ajustar la posición del jugador.
+
+        // Ejemplo:
+        // Location newLocation = lagCompensator.getCompensatedLocation(victim);
+        // if (newLocation != null) {
+        //     victim.teleport(newLocation);
+        // }
     }
 }
